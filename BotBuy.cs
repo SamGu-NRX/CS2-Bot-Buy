@@ -9,7 +9,7 @@ using System.Linq;
 
 namespace BotBuyPatch;
 
-public sealed class BotBuyPatch : BasePlugin
+public sealed partial class BotBuyPatch : BasePlugin
 {
     public override string ModuleName        => "BotBuyPatch";
     public override string ModuleVersion     => "1.0.14";
@@ -469,6 +469,7 @@ public sealed class BotBuyPatch : BasePlugin
             {
                 foreach (var team in new[] { CsTeam.CounterTerrorist, CsTeam.Terrorist })
                 {
+                    if (IsSavingTeam(team)) continue;
                     if (!_poorPlayersByTeam.TryGetValue(team, out var poor))
                         poor = new List<CCSPlayerController>();
                     poor = poor.Where(p => p.IsValid && p.InGameMoneyServices != null).ToList();
@@ -525,6 +526,7 @@ public sealed class BotBuyPatch : BasePlugin
         {
             foreach (var team in new[] { CsTeam.CounterTerrorist, CsTeam.Terrorist })
             {
+                if (IsSavingTeam(team)) continue;
                 _poorPlayersByTeam.TryGetValue(team, out var poor);
                 var poorSet = new HashSet<CCSPlayerController>(poor ?? new List<CCSPlayerController>());
 
@@ -642,6 +644,8 @@ public sealed class BotBuyPatch : BasePlugin
     {
         if (!player.IsValid || !player.IsBot || player.InGameMoneyServices == null)
             return false;
+        if (IsSaving(player))
+            return false;
 
         var pawn = player.PlayerPawn.Value;
         if (pawn == null || !pawn.IsValid)
@@ -715,6 +719,7 @@ public sealed class BotBuyPatch : BasePlugin
 
         player.InGameMoneyServices.Account -= price;
         Utilities.SetStateChanged(player, "CCSPlayerController", "m_pInGameMoneyServices");
+        if (price > 0) RecordPurchase(player, itemName, price);
 
         return true;
     }
@@ -840,6 +845,8 @@ public sealed class BotBuyPatch : BasePlugin
     private bool Swap(CCSPlayerController player, string oldItem, string newItem)
     {
         if (!player.IsValid || !player.IsBot || player.InGameMoneyServices == null)
+            return false;
+        if (IsSaving(player))
             return false;
 
         var pawn = player.PlayerPawn.Value;
