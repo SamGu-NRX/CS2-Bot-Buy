@@ -24,6 +24,9 @@ public sealed partial class BotBuyPatch : BasePlugin
     private Dictionary<int, List<string>> _prevWeapons = new();
     private Dictionary<int, int> _prevMoney = new();
     private Dictionary<int, int> _prevArmor = new();
+
+    public readonly FakeConVar<bool> FamasToM4 = new("bb_famas_to_m4",
+        "CT bots that bought a FAMAS swap it for an M4A4 or M4A1-S when they can afford one (0 = off, 1 = on)", true);
 //----------------------------------------------------------------------------------------------
     [GameEventHandler]
     public HookResult OnPlayerConnectFull(EventPlayerConnectFull @event, GameEventInfo info)
@@ -202,6 +205,24 @@ public sealed partial class BotBuyPatch : BasePlugin
                 {
                     if (!copyPlayer.IsValid) return;
                     Swap(copyPlayer, "weapon_aug", "weapon_m4a1_silencer");
+                });
+            }
+        }
+        // Swap FAMAS
+        // Most bot profiles list famas ahead of both M4s (RiflePro: aug, sg556, famas, galilar,
+        // m4a1_silencer, ..., m4a1), and the native buy works down that list, so a CT that could
+        // not afford an AUG bought a FAMAS even with M4 money. Swap refunds only a FAMAS bought
+        // this round and buys it back when the M4 is unaffordable.
+        if (FamasToM4.Value)
+        {
+            foreach (var player in ctBots)
+            {
+                var copyPlayer = player;
+                string m4 = Random.Shared.Next(2) == 0 ? "weapon_m4a1" : "weapon_m4a1_silencer";
+                AddTimer(0.4f, () =>
+                {
+                    if (!copyPlayer.IsValid) return;
+                    Swap(copyPlayer, "weapon_famas", m4);
                 });
             }
         }
