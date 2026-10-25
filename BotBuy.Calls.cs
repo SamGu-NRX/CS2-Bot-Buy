@@ -12,12 +12,14 @@ namespace BotBuyPatch;
 // Save = no further buys and refund this round's guns; utility and armor already bought are kept, like a half-save.
 // Buy = bots without a primary that cannot full-buy get an SMG or rifle plus armor, if still in the buy zone.
 // A call during buy time applies to the current round; a later call applies to the next round.
+// "Need a weapon" gets the requester a rifle paid by a bot teammate, during buy time only.
 public sealed partial class BotBuyPatch
 {
     private enum TeamCall { None, Save, Buy }
 
     private const string SaveToken = "#Chatwheel_requestecoround";
     private const string BuyToken = "#Chatwheel_requestspend";
+    private const string WeaponToken = "#Chatwheel_requestweapon";
 
     // Worst-case income after a lost round (CS2 loss bonus starts at $1400).
     private const int MinLossIncome = 1400;
@@ -27,6 +29,8 @@ public sealed partial class BotBuyPatch
     // Every bot gun purchase is recorded (one inventory walk each, about 40 a round), so a save made after
     // a hot load or a mid-round join still finds this round's guns.
     private readonly PurchaseLedger _ledger = new();
+    // Requesters who already got a drop this round.
+    private readonly HashSet<int> _droppedFor = new();
 
     // CS2 can name variants after their base gun (player_hurt calls the M4A1-S "m4a1"); match either name.
     private static readonly Dictionary<string, string> BaseClass = new() { ["weapon_m4a1_silencer"] = "weapon_m4a1",
@@ -43,13 +47,19 @@ public sealed partial class BotBuyPatch
         if (player.Team != CsTeam.Terrorist && player.Team != CsTeam.CounterTerrorist) return HookResult.Continue;
 
         string args = info.ArgString;
+        bool weaponRequest = args.Contains(WeaponToken);
         TeamCall call = args.Contains(SaveToken) ? TeamCall.Save
                       : args.Contains(BuyToken) ? TeamCall.Buy
                       : TeamCall.None;
-        if (call == TeamCall.None) return HookResult.Continue;
+        if (call == TeamCall.None && !weaponRequest) return HookResult.Continue;
 
         var rules = GameRules();
         if (rules == null || rules.WarmupPeriod || BotLoadoutForced()) return HookResult.Continue;
+        if (weaponRequest)
+        {
+            DropFor(player, rules);
+            return HookResult.Continue;
+        }
 
         if (rules.BuyTimeEnded)
         {
@@ -68,6 +78,7 @@ public sealed partial class BotBuyPatch
     {
         _activeCall.Clear();
         _ledger.NewRound();
+        _droppedFor.Clear();
 
         // Teams swap sides at halftime, so a call from the last round of a half is stale.
         if (IsFirstRoundOfHalf()) _pendingCall.Clear();
@@ -115,6 +126,33 @@ public sealed partial class BotBuyPatch
                 if (atSpawn || bot.PlayerPawn.Value?.InBuyZone == true) ForceBuy(bot);
             Announce(team, "buying");
         }
+    }
+
+    // "Need a weapon": during buy time, the richest bot teammate that is not saving and still has the
+    // money after its own buy pays for a rifle for a requester without a primary, like the round-start drop.
+    private void DropFor(CCSPlayerController requester, CCSGameRules rules)
+    {
+        if (!requester.PawnIsAlive || OwnsPrimary(requester) || _droppedFor.Contains(requester.Slot)) return;
+        var team = requester.Team;
+        if (rules.BuyTimeEnded) { Announce(team, "too late for a drop this round"); return; }
+
+        int price = team == CsTeam.CounterTerrorist ? 2900 : 2700;
+        var giver = Utilities.GetPlayers()
+            .Where(p => p.IsValid && p.IsBot && p.Team == team && p.PawnIsAlive && !IsSaving(p)
+                        && (p.InGameMoneyServices?.Account ?? 0) >= price)
+            .OrderByDescending(p => p.InGameMoneyServices!.Account)
+            .FirstOrDefault();
+        if (giver == null) { Announce(team, $"no bot has ${price} to spare for a drop"); return; }
+
+        string gun = team == CsTeam.CounterTerrorist
+            ? (Random.Shared.Next(2) == 0 ? "weapon_m4a1_silencer" : "weapon_m4a1")
+            : "weapon_ak47";
+        requester.GiveNamedItem(gun);
+        _droppedFor.Add(requester.Slot);
+        giver.InGameMoneyServices!.Account -= price;
+        Utilities.SetStateChanged(giver, "CCSPlayerController", "m_pInGameMoneyServices");
+        foreach (var p in Utilities.GetPlayers().Where(p => p.IsValid && !p.IsBot && p.Team == team))
+            p.PrintToChat($"{ChatColors.Green}{giver.PlayerName}{ChatColors.Yellow}: {requester.PlayerName}, I dropped a weapon for ya");
     }
 
     // A bot ignores a save when it could still afford a full buy next round after losing this one.
