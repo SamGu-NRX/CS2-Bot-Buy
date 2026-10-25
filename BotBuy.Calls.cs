@@ -107,7 +107,7 @@ public sealed partial class BotBuyPatch
     private void ApplyCall(CsTeam team, TeamCall call, bool atSpawn)
     {
         _activeCall[team] = call;
-        var bots = Utilities.GetPlayers().Where(p => p.IsValid && p.IsBot && p.Team == team && p.PawnIsAlive).ToList();
+        var bots = Controllers().Where(p => p.IsValid && p.IsBot && p.Team == team && p.PawnIsAlive).ToList();
 
         if (call == TeamCall.Save)
         {
@@ -137,7 +137,7 @@ public sealed partial class BotBuyPatch
         if (rules.BuyTimeEnded) { Announce(team, "too late for a drop this round"); return; }
 
         int price = team == CsTeam.CounterTerrorist ? 2900 : 2700;
-        var giver = Utilities.GetPlayers()
+        var giver = Controllers()
             .Where(p => p.IsValid && p.IsBot && p.Team == team && p.PawnIsAlive && !IsSaving(p)
                         && (p.InGameMoneyServices?.Account ?? 0) >= price)
             .OrderByDescending(p => p.InGameMoneyServices!.Account)
@@ -151,7 +151,7 @@ public sealed partial class BotBuyPatch
         _droppedFor.Add(requester.Slot);
         giver.InGameMoneyServices!.Account -= price;
         Utilities.SetStateChanged(giver, "CCSPlayerController", "m_pInGameMoneyServices");
-        foreach (var p in Utilities.GetPlayers().Where(p => p.IsValid && !p.IsBot && p.Team == team))
+        foreach (var p in Controllers().Where(p => p.IsValid && !p.IsBot && p.Team == team))
             p.PrintToChat($"{ChatColors.Green}{giver.PlayerName}{ChatColors.Yellow}: {requester.PlayerName}, I dropped a weapon for ya");
     }
 
@@ -231,6 +231,11 @@ public sealed partial class BotBuyPatch
         bot.PlayerPawn.Value?.WeaponServices?.MyWeapons.Any(w =>
             w.Value?.As<CCSWeaponBase>().VData?.GearSlot == gear_slot_t.GEAR_SLOT_RIFLE) ?? false;
 
+    // The entity list, as upstream's round-start code uses. Utilities.GetPlayers() stops at Server.MaxPlayers,
+    // which can keep the main menu's one-player limit after a cold launch and then returns only the host.
+    private static IEnumerable<CCSPlayerController> Controllers() =>
+        Utilities.FindAllEntitiesByDesignerName<CCSPlayerController>("cs_player_controller");
+
     private static CCSGameRules? GameRules() =>
         Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules").FirstOrDefault()?.GameRules;
 
@@ -238,7 +243,7 @@ public sealed partial class BotBuyPatch
 
     private static void Announce(CsTeam team, string what)
     {
-        foreach (var p in Utilities.GetPlayers().Where(p => p.IsValid && !p.IsBot && p.Team == team))
+        foreach (var p in Controllers().Where(p => p.IsValid && !p.IsBot && p.Team == team))
             p.PrintToChat($" {ChatColors.Green}Bots{ChatColors.Default}: {what}");
     }
 }
